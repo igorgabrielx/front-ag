@@ -31,6 +31,8 @@ Interface web desenvolvida em Vue 3 para configuração e execução de algoritm
 
 ## 🛠️ Instalação
 
+### Desenvolvimento Local
+
 1. Clone o repositório:
 ```bash
 git clone https://github.com/igorgabrielx/front-ag.git
@@ -48,6 +50,31 @@ npm run dev
 ```
 
 4. Acesse a aplicação em `http://localhost:5173`
+
+### Docker
+
+#### Usando Docker Compose (Recomendado)
+
+1. Build e execute o container:
+```bash
+docker-compose up -d
+```
+
+2. Acesse a aplicação em `http://localhost:8080`
+
+#### Usando Docker diretamente
+
+1. Build da imagem:
+```bash
+docker build -t front-ag .
+```
+
+2. Execute o container:
+```bash
+docker run -d -p 8080:80 --name front-ag front-ag
+```
+
+3. Acesse a aplicação em `http://localhost:8080`
 
 ## 📦 Scripts Disponíveis
 

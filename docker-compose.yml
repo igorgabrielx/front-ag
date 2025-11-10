@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  front-ag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: front-ag
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+
