@@ -1,6 +1,6 @@
 <script setup>
 // Aqui você pode adicionar lógica reativa do Vue
-import { ref, onUnmounted, onMounted, nextTick } from 'vue'
+import { ref, onUnmounted, onMounted, nextTick, computed } from 'vue'
 import axios from "axios"
 import { Chart, registerables } from 'chart.js'
 
@@ -15,9 +15,66 @@ const executionId = ref(null)
 const executionStatus = ref(null)
 const executionData = ref(null)
 const pollingInterval = ref(null)
+const latestExecution = ref(null)
+const selectedExecution = ref(null)
+const allExecutions = ref([])
 
 const chartCanvas = ref(null)
 const fitnessChart = ref(null)
+
+// Função para converter binário para decimal
+const binaryToDecimal = (binaryString) => {
+  return parseInt(binaryString, 2)
+}
+
+// Função para normalizar valor decimal para o range [min, max]
+const normalizeValue = (decimalValue, bitSize, min, max) => {
+  const maxDecimal = Math.pow(2, bitSize) - 1
+  return min + (decimalValue / maxDecimal) * (max - min)
+}
+
+// Função para decodificar o cromossomo
+const decodeChromosome = (chromosomeBinary, xBitSize, yBitSize, min, max) => {
+  if (!chromosomeBinary) return null
+  
+  const xBinary = chromosomeBinary.substring(0, xBitSize)
+  const yBinary = chromosomeBinary.substring(xBitSize, xBitSize + yBitSize)
+  
+  const xDecimal = binaryToDecimal(xBinary)
+  const yDecimal = binaryToDecimal(yBinary)
+  
+  const x = normalizeValue(xDecimal, xBitSize, min, max)
+  const y = normalizeValue(yDecimal, yBitSize, min, max)
+  
+  return { x, y }
+}
+
+// Computed para o melhor cromossomo
+const bestChromosome = computed(() => {
+  const data = selectedExecution.value || latestExecution.value || executionData.value
+  if (data && data.chromosome_max_value) {
+    return data.chromosome_max_value
+  }
+  return null
+})
+
+// Computed para o valor aplicado do cromossomo
+const chromosomeAppliedValue = computed(() => {
+  const data = selectedExecution.value || latestExecution.value || executionData.value
+  if (data && data.chromosome_max_value && data.x_bit_size && data.y_bit_size && data.min !== undefined && data.max !== undefined) {
+    const decoded = decodeChromosome(
+      data.chromosome_max_value,
+      data.x_bit_size,
+      data.y_bit_size,
+      data.min,
+      data.max
+    )
+    if (decoded) {
+      return `x = ${decoded.x.toFixed(6)}, y = ${decoded.y.toFixed(6)}`
+    }
+  }
+  return null
+})
 
 const startExecution = async () => {
   try {
@@ -72,6 +129,10 @@ const checkStatus = async () => {
         stopPolling()
         // Atualizar gráfico quando execução concluir
         if (executionStatus.value === "concluido") {
+          // Atualizar latestExecution com os dados da execução concluída
+          if (executionData.value.chromosome_max_value) {
+            latestExecution.value = executionData.value
+          }
           loadFitnessChart()
         }
       }
@@ -97,6 +158,20 @@ const loadFitnessChart = async () => {
     if (response.data && response.data.data) {
       const executions = response.data.data
       
+      // Armazenar todas as execuções
+      allExecutions.value = executions
+      
+      // Carregar a última execução para mostrar os resultados
+      if (executions.length > 0) {
+        // Ordenar por data (mais recente primeiro) ou pegar o último
+        const sorted = executions.sort((a, b) => {
+          const dateA = new Date(a.date || 0)
+          const dateB = new Date(b.date || 0)
+          return dateB - dateA
+        })
+        latestExecution.value = sorted[0]
+      }
+      
       // Extrair dados relevantes
       const labels = executions.map(exec => exec.num_gen)
       const values = executions.map(exec => exec.max_fitness)
@@ -111,6 +186,9 @@ const loadFitnessChart = async () => {
       
       if (chartCanvas.value) {
         const ctx = chartCanvas.value.getContext('2d')
+        
+        // Armazenar referência às execuções para uso no evento onClick
+        const executionsRef = executions
         
         fitnessChart.value = new Chart(ctx, {
           type: 'line',
@@ -133,6 +211,21 @@ const loadFitnessChart = async () => {
           options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: {
+              intersect: false,
+              mode: 'index'
+            },
+            onClick: (event, activeElements) => {
+              if (activeElements && activeElements.length > 0) {
+                const clickedIndex = activeElements[0].index
+                // Encontrar a execução correspondente ao índice clicado
+                const clickedExecution = executionsRef[clickedIndex]
+                if (clickedExecution) {
+                  selectedExecution.value = clickedExecution
+                  console.log('Execução selecionada:', clickedExecution)
+                }
+              }
+            },
             plugins: {
               legend: { 
                 display: true,
@@ -151,6 +244,25 @@ const loadFitnessChart = async () => {
                   family: 'Inter, sans-serif',
                   size: 14,
                   weight: 'bold'
+                }
+              },
+              tooltip: {
+                callbacks: {
+                  title: (context) => {
+                    return `Gerações: ${context[0].label}`
+                  },
+                  label: (context) => {
+                    const index = context.dataIndex
+                    const execution = executionsRef[index]
+                    if (execution) {
+                      return [
+                        `Fitness: ${context.parsed.y.toFixed(6)}`,
+                        `Taxa de Crossover: ${(execution.taxa_crossover || 0).toFixed(3)}`,
+                        `Taxa de Mutação: ${(execution.taxa_mutation || 0).toFixed(4)}`
+                      ]
+                    }
+                    return `Fitness: ${context.parsed.y.toFixed(6)}`
+                  }
                 }
               }
             },
@@ -354,16 +466,31 @@ onUnmounted(() => {
 
       <!-- Resultado -->
       <div class="mt-8 space-y-4">
+        <div v-if="selectedExecution" class="flex items-center justify-between mb-2">
+          <p class="font-display text-sm text-[#92a9c9]">
+            Exibindo dados do ponto selecionado no gráfico
+          </p>
+          <button 
+            @click="selectedExecution = null" 
+            class="font-display text-xs text-[#136dec] hover:text-[#0f5bc4] underline"
+          >
+            Limpar seleção
+          </button>
+        </div>
         <div class="flex flex-col">
           <p class="font-display text-base font-medium text-white">Resultado do Melhor Cromossomo</p>
           <div class="flex h-14 min-w-0 flex-1 items-center overflow-hidden rounded-lg border border-[#324867] bg-[#192433] px-4">
-            <p class="font-display text-base text-[#92a9c9]">-</p>
+            <p class="font-display text-base text-[#92a9c9] break-all">
+              {{ bestChromosome || '-' }}
+            </p>
           </div>
         </div>
         <div class="flex flex-col">
           <p class="font-display text-base font-medium text-white">Valor desse Cromossomo Aplicado</p>
           <div class="flex h-14 min-w-0 flex-1 items-center overflow-hidden rounded-lg border border-[#324867] bg-[#192433] px-4">
-            <p class="font-display text-base text-[#92a9c9]">-</p>
+            <p class="font-display text-base text-[#92a9c9]">
+              {{ chromosomeAppliedValue || '-' }}
+            </p>
           </div>
         </div>
       </div>
